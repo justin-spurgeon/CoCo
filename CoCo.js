@@ -79,10 +79,20 @@ const commands = {
 	offsetStart: (i, amount) => i.map(({pitch, start_time, duration, velocity}) => ({pitch, start_time: start_time+amount, duration, velocity})),
 	offsetDuration: (i, amount) => i.map(({pitch, start_time, duration, velocity}) => ({pitch, start_time, duration: duration+amount, velocity})),
 	offsetVelocity: (i, amount) => i.map(({pitch, start_time, duration, velocity}) => ({pitch, start_time, duration, velocity: velocity+amount})),
-			
+	
+  invertPitch: (i) => i.map(({pitch, start_time, duration, velocity}) => ({pitch: 127-pitch, start_time, duration, velocity})),
 	
 	// splitting methods
 	subdividePattern: (i, pattern) => subdivideWithPattern(i, pattern),
+  subdivide: (i, divisions) => i.flatMap(({pitch, start_time, duration, velocity}) => {
+    const subDuration = duration / divisions;
+    return Array.from({length: divisions}, (_, i) => ({
+      pitch,
+      start_time: start_time + i * subDuration,
+      duration: subDuration,
+      velocity
+    }));
+  }),
 	
 	// joining methods
 	
@@ -91,13 +101,10 @@ const commands = {
 	// TODOs
 	clear: (i, track, clipSlot) => i,
 	flatten: (i) => i,
-	subdivide: (i, divisions) => i,
-	invert: (i) => i
 
 }
 
 function subdivideWithPattern(notes, pattern) {
-  //post("\n\npatta " + pattern);
   const steps = pattern.length;
 
   return notes.flatMap(note => {
@@ -143,47 +150,17 @@ function tokenize(src) {
 }
 
 function parseArg(arg) {
-  // Array or object
   if (arg.startsWith("[") || arg.startsWith("{")) {
     return JSON.parse(arg);
   }
 
-  // Number
   const num = Number(arg);
   if (!Number.isNaN(num)) {
     return num;
   }
 
-  // Fallback: string
   return arg;
 }
-
-function splitArgsPreservingBrackets(str) {
-  const parts = [];
-  let current = "";
-  let depth = 0;
-
-  for (let i = 0; i < str.length; i++) {
-    const ch = str[i];
-
-    if (ch === "[" || ch === "{") depth++;
-    if (ch === "]" || ch === "}") depth--;
-
-    if (ch === " " && depth === 0) {
-      if (current) {
-        parts.push(current);
-        current = "";
-      }
-    } else {
-      current += ch;
-    }
-  }
-
-  if (current) parts.push(current);
-  return parts;
-}
-
-
 
 function parse(tokens) {
   return tokens.map(t => {
@@ -201,7 +178,6 @@ function run(src) {
   post(raw);
   const normalized = normalizeTokens(raw);
   const ast = parse(normalized);
-
 
   let data = [];
 
