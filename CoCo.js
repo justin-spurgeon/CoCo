@@ -1,6 +1,5 @@
 function msg_string(s)
 {
-	//post(s);
 	run(s);
 }
 
@@ -21,12 +20,10 @@ function getClip(track, clipSlot) {
 		clip = new LiveAPI(path2);
 	}
 	
-	//post(path2);
 	return clip;
 }
 
 // Returns the clip at the selected track and clip slot
-// TODO - probably needs fallback logic if no clip found
 function readClip(notes, track, clipSlot) {
 	var clip = getClip(track, clipSlot);
 	
@@ -35,7 +32,7 @@ function readClip(notes, track, clipSlot) {
 	return clipNotes.notes;
 }
 
-// TODO - handle missing clip
+//deletes all the notes present in the clip and inserts new ones
 function overwriteClip(notes, track, clipSlot) {
 	var clip = getClip(track, clipSlot);
 	
@@ -238,3 +235,5 @@ function run(src) {
 //done! - read clip dictionary
 //done! - fix mapping that removes note id
 //done! - this needs to handle quotes or something
+//done! - probably needs fallback logic if no clip found
+//done! - handle missing clip
