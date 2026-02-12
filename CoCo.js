@@ -62,139 +62,212 @@ function upliftNoteArray(notes) {
 
 
 
-const commands = {
-	// i/o methods
-	read: (i, track, clipSlot) => readClip(i, track, clipSlot),
-	write: (i, track, clipSlot) => writeClip(i, track, clipSlot), 
-	overwrite: (i, track, clipSlot) => overwriteClip(i, track, clipSlot),
-	
-	// scaling methods (multiplication)
-	scalePitch: (i, scaleFactor) => i.map(({pitch, start_time, duration, velocity}) => ({pitch: pitch*scaleFactor, start_time, duration, velocity})),
-	scaleStart: (i, scaleFactor) => i.map(({pitch, start_time, duration, velocity}) => ({pitch, start_time: start_time*scaleFactor, duration, velocity})),
-	scaleDuration: (i, scaleFactor) => i.map(({pitch, start_time, duration, velocity}) => ({pitch, start_time, duration: duration*scaleFactor, velocity})),
-	scaleVelocity: (i, scaleFactor) => i.map(({pitch, start_time, duration, velocity}) => ({pitch, start_time, duration, velocity: velocity*scaleFactor})),
-	
-	// offset methods (addition)
-	offsetPitch: (i, amount) => i.map(({pitch, start_time, duration, velocity}) => ({pitch: pitch+amount, start_time, duration, velocity})),
-	offsetStart: (i, amount) => i.map(({pitch, start_time, duration, velocity}) => ({pitch, start_time: start_time+amount, duration, velocity})),
-	offsetDuration: (i, amount) => i.map(({pitch, start_time, duration, velocity}) => ({pitch, start_time, duration: duration+amount, velocity})),
-	offsetVelocity: (i, amount) => i.map(({pitch, start_time, duration, velocity}) => ({pitch, start_time, duration, velocity: velocity+amount})),
-	
-  invertPitch: (i) => i.map(({pitch, start_time, duration, velocity}) => ({pitch: 127-pitch, start_time, duration, velocity})),
-	
-	// splitting methods
-	subdividePattern: (i, pattern) => subdivideWithPattern(i, pattern),
-  subdivide: (i, divisions) => i.flatMap(({pitch, start_time, duration, velocity}) => {
-    const subDuration = duration / divisions;
-    return Array.from({length: divisions}, (_, i) => ({
-      pitch,
-      start_time: start_time + i * subDuration,
-      duration: subDuration,
-      velocity
-    }));
-  }),
-	
-	// joining methods
-	
-	// generator methods
-	
-	// TODOs
-	clear: (i, track, clipSlot) => i,
-	flatten: (i) => i,
-
-}
-
-function subdivideWithPattern(notes, pattern) {
-  const steps = pattern.length;
-
-  return notes.flatMap(note => {
-    const subDuration = note.duration / steps;
-
-    return pattern.flatMap((on, i) => {
-      if (!on) return [];
-
-      return {
-        ...note,
-        start_time: note.start_time + i * subDuration,
-        duration: subDuration
-      };
-    });
-  });
-}
-
-const macros = {
-  "/": ["flatten"]
-};
-
-
-
-function normalizeTokens(tokens) {
-  const out = [];
-
-  for (const t of tokens) {
-    if (macros[t]) {
-      out.push(...macros[t]);
-    } else if (t !== "-") {
-      out.push(t);
-    }
-  }
-
-  return out;
-}
+// --- Functional pipeline DSL ---
+// Pipeline: tokens separated by ";". Each token is source (read), sink (write/overwrite), or transform (map/filter/sort + backtick fn, or shorthand e.g. p+12, v*0.8).
 
 function tokenize(src) {
   return src
     .split(/\s*\;\s*/)
-    .map(t => t.trim())
+    .map(function(t) { return t.trim(); })
     .filter(Boolean);
 }
 
-function parseArg(arg) {
-  if (arg.startsWith("[") || arg.startsWith("{")) {
-    return JSON.parse(arg);
+// Splits a segment into parts; backtick-wrapped content stays one part (backticks stripped).
+function splitArgs(segment) {
+  var parts = [];
+  var i = 0;
+  var current = "";
+  var inBackticks = false;
+
+  while (i < segment.length) {
+    var c = segment[i];
+
+    if (inBackticks) {
+      if (c === "`") {
+        parts.push(current);
+        current = "";
+        inBackticks = false;
+      } else {
+        current += c;
+      }
+      i++;
+      continue;
+    }
+
+    if (c === "`") {
+      if (current.length) {
+        parts.push(current.trim());
+        current = "";
+      }
+      inBackticks = true;
+      i++;
+      continue;
+    }
+
+    if (/\s/.test(c)) {
+      if (current.length) {
+        parts.push(current.trim());
+        current = "";
+      }
+      while (i < segment.length && /\s/.test(segment[i])) i++;
+      continue;
+    }
+
+    current += c;
+    i++;
   }
 
-  const num = Number(arg);
-  if (!Number.isNaN(num)) {
-    return num;
+  if (current.length) {
+    parts.push(inBackticks ? current : current.trim());
   }
 
-  return arg;
+  return parts;
 }
 
-function parse(tokens) {
-  return tokens.map(t => {
-    const parts = t.split(/\s+/);
+function compileArrowFunction(arg) {
+  if (typeof arg !== "string") return null;
+  var arrowMatch = arg.match(/^\s*\(([^)]*)\)\s*=>\s*([\s\S]*)$/);
+  if (!arrowMatch) return null;
+  var paramList = arrowMatch[1].split(",").map(function(p) { return p.trim(); }).filter(Boolean);
+  var body = arrowMatch[2].trim();
+  var isExpression = !/^\s*\{/.test(body);
+  var bodyCode = isExpression ? "return (" + body + ")" : body;
+  return new (Function.prototype.bind.apply(Function, [null].concat(paramList, [bodyCode])));
+}
 
+// Shorthand: p|s|d|v + number (offset) or * number (scale). Returns notes=>notes map or null.
+function parseShorthand(token) {
+  if (typeof token !== "string" || !token.length) return null;
+  var m = token.match(/^([psdv])([\*+])(-?\d*\.?\d+)$/);
+  if (!m) return null;
+  var field = m[1];
+  var op = m[2];
+  var num = parseFloat(m[3]);
+  var key = field === "p" ? "pitch" : field === "s" ? "start_time" : field === "d" ? "duration" : "velocity";
+
+  return function(notes) {
+    return notes.map(function(note) {
+      var val = note[key];
+      var newVal = op === "+" ? val + num : val * num;
+      if (key === "pitch" || key === "velocity") newVal = Math.round(Math.max(0, Math.min(127, newVal)));
+      var out = {};
+      for (var k in note) out[k] = note[k];
+      out[key] = newVal;
+      return out;
+    });
+  };
+}
+
+function parseNum(x) {
+  var n = Number(x);
+  return (n !== n) ? 0 : n;
+}
+
+// Returns { fn: function(notes)=>notes } (source fn ignores input). On error, outlet and return null.
+function buildStep(segment) {
+  var parts = splitArgs(segment);
+  if (!parts.length) return null;
+
+  var cmd = parts[0];
+
+  if (cmd === "read" && parts.length >= 3) {
+    var track = parseNum(parts[1]);
+    var slot = parseNum(parts[2]);
     return {
-      name: parts[0],
-      args: parts.slice(1).map(parseArg)
+      fn: function(notes) {
+        return readClip([], track, slot);
+      }
     };
-  });
+  }
+
+  if (cmd === "write" && parts.length >= 3) {
+    var trackW = parseNum(parts[1]);
+    var slotW = parseNum(parts[2]);
+    return {
+      fn: function(notes) {
+        writeClip(notes, trackW, slotW);
+        return notes;
+      }
+    };
+  }
+
+  if (cmd === "overwrite" && parts.length >= 3) {
+    var trackO = parseNum(parts[1]);
+    var slotO = parseNum(parts[2]);
+    return {
+      fn: function(notes) {
+        overwriteClip(notes, trackO, slotO);
+        return notes;
+      }
+    };
+  }
+
+  if (cmd === "map" && parts.length >= 2) {
+    var fnMap = compileArrowFunction(parts[1]);
+    if (typeof fnMap !== "function") {
+      outlet(0, "map expects a function in backticks, e.g. map `(n) => ({ ...n, pitch: n.pitch + 12 })`");
+      return null;
+    }
+    return {
+      fn: function(notes) {
+        return notes.map(function(note, index) { return fnMap(note, index); });
+      }
+    };
+  }
+
+  if (cmd === "filter" && parts.length >= 2) {
+    var fnFilter = compileArrowFunction(parts[1]);
+    if (typeof fnFilter !== "function") {
+      outlet(0, "filter expects a function in backticks, e.g. filter `(note, i) => i % 2 === 0`");
+      return null;
+    }
+    return {
+      fn: function(notes) {
+        return notes.filter(function(note, index) { return fnFilter(note, index); });
+      }
+    };
+  }
+
+  if (cmd === "sort" && parts.length >= 2) {
+    var fnSort = compileArrowFunction(parts[1]);
+    if (typeof fnSort !== "function") {
+      outlet(0, "sort expects a function in backticks, e.g. sort `(a, b) => a.start_time - b.start_time`");
+      return null;
+    }
+    return {
+      fn: function(notes) {
+        return notes.slice().sort(fnSort);
+      }
+    };
+  }
+
+  if (parts.length === 1) {
+    var shorthandFn = parseShorthand(parts[0]);
+    if (shorthandFn) {
+      return { fn: shorthandFn };
+    }
+  }
+
+  outlet(0, "Unknown or malformed segment: " + segment);
+  return null;
 }
 
 function run(src) {
-  const raw = tokenize(src);
-  post(raw);
-  const normalized = normalizeTokens(raw);
-  const ast = parse(normalized);
+  var segments = tokenize(src);
+  post(segments);
 
-  let data = [];
-
-  for (const node of ast) {
-    const fn = commands[node.name];
-
-    if (!fn) {
-      outlet(0, 
-        `Unknown command: "${node.name}"`,
-        "args:",
-        node.args
-      );
-      break;
-    }
-
-    data = fn(data, ...node.args);
+  var steps = [];
+  for (var i = 0; i < segments.length; i++) {
+    var step = buildStep(segments[i]);
+    if (step === null) return;
+    steps.push(step);
   }
+
+  if (steps.length === 0) return;
+
+  var data = steps.reduce(function(acc, step) {
+    return step.fn(acc);
+  }, []);
 
   return data;
 }
