@@ -215,6 +215,41 @@ function buildStep(segment) {
     };
   }
 
+  if (cmd === "flatMap" && parts.length >= 2) {
+    var fnFlatMap = compileArrowFunction(parts[1]);
+    if (typeof fnFlatMap !== "function") {
+      outlet(0, "flatMap expects a function in backticks that returns an array of notes, e.g. flatMap `(n) => [...]`");
+      return null;
+    }
+    return {
+      fn: function(notes) {
+        return notes.flatMap(function(note, index) {
+          var out = fnFlatMap(note, index);
+          return Array.isArray(out) ? out : [out];
+        });
+      }
+    };
+  }
+
+  if (cmd === "subdivide" && parts.length >= 2) {
+    var divisions = Math.max(1, Math.min(256, Math.floor(parseNum(parts[1]))));
+    return {
+      fn: function(notes) {
+        return notes.flatMap(function(note) {
+          var d = note.duration / divisions;
+          return Array.from({ length: divisions }, function(_, i) {
+            return {
+              pitch: note.pitch,
+              start_time: note.start_time + i * d,
+              duration: d,
+              velocity: note.velocity
+            };
+          });
+        });
+      }
+    };
+  }
+
   if (cmd === "filter" && parts.length >= 2) {
     var fnFilter = compileArrowFunction(parts[1]);
     if (typeof fnFilter !== "function") {

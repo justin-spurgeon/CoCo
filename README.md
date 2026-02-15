@@ -16,10 +16,15 @@ Initial value is `[]`. So the first step should usually be `read 0 0` to load a 
 **Primitives (function in backticks):**
 
 - `map \`(note, index) => newNote\`` — per-note mapping.
+- `flatMap \`(note, index) => arrayOfNotes\`` — one note can become many; result is flattened.
 - `filter \`(note, index) => boolean\`` — keep notes that return true.
 - `sort \`(a, b) => number\`` — comparator (negative / zero / positive).
 
 Wrap the whole function in backticks so it parses as one argument.
+
+**Aliases (built-in, no backticks):**
+
+- `subdivide N` — split each note into N notes of equal duration (N from 1 to 256).
 
 **Shorthand (single token):**
 
@@ -31,6 +36,12 @@ Wrap the whole function in backticks so it parses as one argument.
 
 ```text
 read 0 0 ; filter `(n,i)=>i%2===0` ; p+12 ; v*0.8 ; overwrite 0 0
+```
+
+Subdivide each note into three, then write back:
+
+```text
+read 0 0 ; subdivide 3 ; overwrite 0 0
 ```
 
 Or without shorthand:
